@@ -301,8 +301,12 @@ st.divider()
 st.markdown('### 🤖 Titanic Intelligence Assistant', unsafe_allow_html=True)
 
 # GEMINI SETUP
-# NOTE: In production, use st.secrets["GOOGLE_API_KEY"]
-api_key = os.getenv("GOOGLE_API_KEY")
+# Priority: 1. Streamlit Secrets, 2. Environment Variable
+api_key = None
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+elif os.getenv("GOOGLE_API_KEY"):
+    api_key = os.getenv("GOOGLE_API_KEY")
 
 if api_key:
     genai.configure(api_key=api_key)
