@@ -112,8 +112,17 @@ def load_data():
     df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
     return df
 
-df = load_data()
-model = joblib.load('champion_titanic_model.joblib') if os.path.exists('champion_titanic_model.joblib') else None
+try:
+    df = load_data()
+    if os.path.exists('champion_titanic_model.joblib'):
+        model = joblib.load('champion_titanic_model.joblib')
+    else:
+        model = None
+        st.warning("Prediction model not found. Simulator will be disabled.")
+except Exception as e:
+    st.error(f"Error loading system data: {e}")
+    df = pd.DataFrame()
+    model = None
 
 # ----------------------------------------------------------------------------
 # 3. PREMIUM VISUALIZATIONS
@@ -311,33 +320,36 @@ elif os.getenv("GOOGLE_API_KEY"):
 if api_key:
     genai.configure(api_key=api_key)
     
-    # 1. ROBUST MODEL DISCOVERY (Run once or if model missing)
+    # ROBUST SESSION RESET (if key changes)
+    if "current_api_key_hash" not in st.session_state or st.session_state.current_api_key_hash != hash(api_key):
+        st.session_state.current_api_key_hash = hash(api_key)
+        if "working_model_name" in st.session_state:
+            del st.session_state.working_model_name
+        if "messages" in st.session_state:
+            st.session_state.messages = []
+
+    # 1. ROBUST MODEL DISCOVERY
     if "working_model_name" not in st.session_state:
-        # Preferred models in order of priority (Latest to Stable)
-        candidates = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+        candidates = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"]
         found_model = None
         
-        with st.spinner("Initializing AI Assistant..."):
+        with st.spinner("🔍 Connecting to AI Assistant..."):
+            # Step A: Attempt Listing (Fastest if it works)
             try:
-                # Try discovery from all available models first
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                
-                # Pick the first candidate that exists in available_models
                 for cand in candidates:
-                    # check for both "models/name" and "name"
                     if any(cand in m for m in available_models):
-                        # Use the exact name from the available list
                         found_model = next(m for m in available_models if cand in m)
                         break
-                
-                if not found_model and available_models:
-                    found_model = available_models[0] # Fallback to anything available
-            except Exception as e:
-                st.error(f"Could not list models: {e}")
-                # Fallback to hardcoded sequence if listing fails (some restricted keys)
+            except Exception as list_e:
+                available_models = []
+            
+            # Step B: Direct Probing if listing failed or found nothing
+            if not found_model:
                 for cand in candidates:
                     try:
                         test_model = genai.GenerativeModel(cand)
+                        # Quick probe with low token count
                         test_model.generate_content("hi", generation_config={"max_output_tokens": 1})
                         found_model = cand
                         break
@@ -346,7 +358,7 @@ if api_key:
         if found_model:
             st.session_state.working_model_name = found_model
         else:
-            st.error("No compatible Gemini models found. Please check your API key permissions.")
+            st.error("AI Assistant is offline. Please check your API key permissions.")
 
     # 2. ASSISTANT LOGIC
     if "working_model_name" in st.session_state:
