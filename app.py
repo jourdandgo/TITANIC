@@ -310,60 +310,80 @@ elif os.getenv("GOOGLE_API_KEY"):
 
 if api_key:
     genai.configure(api_key=api_key)
-    model_ai = genai.GenerativeModel('gemini-1.5-flash')
     
-    # SYSTEM PROMPT CONTEXT
-    data_summary = f"""
-    Dataset context:
-    - Total passengers: {len(df)}
-    - Survival rate: {df['Survived'].mean():.1%}
-    - Columns: {', '.join(df.columns)}
-    - Summary Stats:
-      - Average Age: {df['Age'].mean():.1f}
-      - Female Survival: {df[df['Sex']=='female']['Survived'].mean():.1%}
-      - Male Survival: {df[df['Sex']=='male']['Survived'].mean():.1%}
-    Model context:
-    - Algorithm: Random Forest (Best performing)
-    - Accuracy: 82%
-    - Benchmarked against: Logistic Regression (81%), KNN (82%)
-    """
-    
-    system_instruction = f"""
-    You are the 'Titanic Intel' AI Assistant. You help users understand the Titanic dataset, 
-    the survival prediction model, and historical context.
-    
-    Guidelines:
-    1. Use the following context to answer: {data_summary}
-    2. Be professional, insightful, and concise.
-    3. If asked about model predictions, explain that features like Class, Sex, and Age are primary drivers.
-    4. Maintain the 'Titanic Intel' brand voice: authoritative yet accessible.
-    """
-
-    # CHAT UI
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # Display chat messages from history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # React to user input
-    if prompt := st.chat_input("Ask me anything about the Titanic data or model..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
+    # 1. ROBUST MODEL DISCOVERY (Run once or if model missing)
+    if "working_model_name" not in st.session_state:
+        # Preferred models in order of priority (Latest to Stable)
+        candidates = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+        found_model = None
+        
+        with st.spinner("Initializing AI Assistant..."):
             try:
-                full_prompt = f"{system_instruction}\n\nUser: {prompt}"
-                response = model_ai.generate_content(full_prompt)
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                # Try discovery from all available models first
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                
+                # Pick the first candidate that exists in available_models
+                for cand in candidates:
+                    # check for both "models/name" and "name"
+                    if any(cand in m for m in available_models):
+                        # Use the exact name from the available list
+                        found_model = next(m for m in available_models if cand in m)
+                        break
+                
+                if not found_model and available_models:
+                    found_model = available_models[0] # Fallback to anything available
             except Exception as e:
-                st.error(f"Error communicating with Gemini: {e}")
+                st.error(f"Could not list models: {e}")
+                # Fallback to hardcoded sequence if listing fails (some restricted keys)
+                for cand in candidates:
+                    try:
+                        test_model = genai.GenerativeModel(cand)
+                        test_model.generate_content("hi", generation_config={"max_output_tokens": 1})
+                        found_model = cand
+                        break
+                    except: continue
+
+        if found_model:
+            st.session_state.working_model_name = found_model
+        else:
+            st.error("No compatible Gemini models found. Please check your API key permissions.")
+
+    # 2. ASSISTANT LOGIC
+    if "working_model_name" in st.session_state:
+        model_ai = genai.GenerativeModel(st.session_state.working_model_name)
+        
+        # System Prompt
+        data_summary = f"Total:{len(df)}, SurvRate:{df['Survived'].mean():.1%}, Accu:82%, Models:RF,LR,KNN."
+        system_instruction = f"You are Titanic Intel AI. Using context [{data_summary}], help users with dataset/model queries concisely."
+
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        if prompt := st.chat_input("Ask me anything about the Titanic data..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                try:
+                    response = model_ai.generate_content(f"{system_instruction}\n\nUser: {prompt}")
+                    if response and response.text:
+                        st.markdown(response.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    else:
+                        st.warning("No response generated. Check safety filters.")
+                except Exception as e:
+                    st.error(f"Communication Error: {e}")
+                    # Clear cache on failure to force re-discovery next time
+                    if "404" in str(e) or "not found" in str(e).lower():
+                        del st.session_state.working_model_name
+                        st.info("🔄 Connection issue detected. Re-initializing on next message...")
 else:
-    st.info("To enable the AI Assistant, please set the GOOGLE_API_KEY environment variable.")
+    st.info("To enable the AI Assistant, please set the GOOGLE_API_KEY in .streamlit/secrets.toml.")
 
 st.write("")
 st.markdown("<p style='text-align: center; color: #94a3b8; font-size: 12px;'>Purified Forensic Dashboard | © 2026 Titanic Intel</p>", unsafe_allow_html=True)

@@ -4,4 +4,4 @@ numpy
 plotly
 scikit-learn==1.6.1
 joblib
-google-generativeai
+google-generativeai==0.8.6
