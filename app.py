@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import joblib
 import os
+import google.generativeai as genai
 
 # ----------------------------------------------------------------------------
 # 1. PAGE & THEME CONFIG
@@ -291,6 +292,74 @@ with st.container(border=True):
         with st.container(border=True):
             st.write("#### KNN Classifier")
             st.metric("Accuracy", "82%")
+
+
+# ----------------------------------------------------------------------------
+# 5. GEMINI AI ASSISTANT
+# ----------------------------------------------------------------------------
+st.divider()
+st.markdown('### 🤖 Titanic Intelligence Assistant', unsafe_allow_html=True)
+
+# GEMINI SETUP
+# NOTE: In production, use st.secrets["GOOGLE_API_KEY"]
+api_key = os.getenv("GOOGLE_API_KEY")
+
+if api_key:
+    genai.configure(api_key=api_key)
+    model_ai = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # SYSTEM PROMPT CONTEXT
+    data_summary = f"""
+    Dataset context:
+    - Total passengers: {len(df)}
+    - Survival rate: {df['Survived'].mean():.1%}
+    - Columns: {', '.join(df.columns)}
+    - Summary Stats:
+      - Average Age: {df['Age'].mean():.1f}
+      - Female Survival: {df[df['Sex']=='female']['Survived'].mean():.1%}
+      - Male Survival: {df[df['Sex']=='male']['Survived'].mean():.1%}
+    Model context:
+    - Algorithm: Random Forest (Best performing)
+    - Accuracy: 82%
+    - Benchmarked against: Logistic Regression (81%), KNN (82%)
+    """
+    
+    system_instruction = f"""
+    You are the 'Titanic Intel' AI Assistant. You help users understand the Titanic dataset, 
+    the survival prediction model, and historical context.
+    
+    Guidelines:
+    1. Use the following context to answer: {data_summary}
+    2. Be professional, insightful, and concise.
+    3. If asked about model predictions, explain that features like Class, Sex, and Age are primary drivers.
+    4. Maintain the 'Titanic Intel' brand voice: authoritative yet accessible.
+    """
+
+    # CHAT UI
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display chat messages from history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # React to user input
+    if prompt := st.chat_input("Ask me anything about the Titanic data or model..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            try:
+                full_prompt = f"{system_instruction}\n\nUser: {prompt}"
+                response = model_ai.generate_content(full_prompt)
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            except Exception as e:
+                st.error(f"Error communicating with Gemini: {e}")
+else:
+    st.info("To enable the AI Assistant, please set the GOOGLE_API_KEY environment variable.")
 
 st.write("")
 st.markdown("<p style='text-align: center; color: #94a3b8; font-size: 12px;'>Purified Forensic Dashboard | © 2026 Titanic Intel</p>", unsafe_allow_html=True)
